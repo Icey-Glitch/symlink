@@ -1,13 +1,15 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs::{create_dir_all, remove_file, write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use tempfile;
 use walkdir::WalkDir;
 
 // Define a struct to hold the configuration for each folder to symlink
 #[derive(Debug, Serialize, Deserialize)]
 struct FolderConfig {
-    path: String,
+    path: PathBuf,
     exclude: Vec<String>,
 }
 
@@ -15,7 +17,7 @@ struct FolderConfig {
 #[derive(Debug, Serialize, Deserialize)]
 struct ApiConfig {
     folders: Vec<FolderConfig>,
-    symlink_root: String,
+    symlink_root: PathBuf,
 }
 
 // Load the API configuration from a JSON file
@@ -44,9 +46,9 @@ fn generate_symlinks(api_config: &ApiConfig) -> Result<(), Box<dyn std::error::E
             let symlink_path = Path::new(&symlink_root)
                 .join(entry_path.strip_prefix(&folder.path).unwrap().to_owned());
 
-            // Remove any existing symlink at the symlink path
-            if symlink_path.exists() {
-                remove_file(&symlink_path)?;
+            // Check if the symlink already exists
+            if symlinks.contains(&symlink_path.to_str().unwrap().to_owned()) {
+                continue;
             }
 
             // Check if the file should be excluded based on the folder's exclusion patterns
@@ -55,10 +57,13 @@ fn generate_symlinks(api_config: &ApiConfig) -> Result<(), Box<dyn std::error::E
                 re.is_match(entry_path.to_str().unwrap())
             });
 
-            // Create a symlink for the file if it's not excluded
-            if !excluded {
+            // Create a symlink for the file if it exists and is not excluded
+            if entry_path.exists() && !excluded {
                 create_dir_all(&symlink_path.parent().unwrap())?;
+                #[cfg(windows)]
                 std::os::windows::fs::symlink_file(&entry_path, &symlink_path)?;
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&entry_path, &symlink_path)?;
                 symlinks.push(symlink_path.to_str().unwrap().to_owned());
             }
         }
@@ -67,15 +72,9 @@ fn generate_symlinks(api_config: &ApiConfig) -> Result<(), Box<dyn std::error::E
     // Remove duplicate symlinks and write them to a file
     symlinks.sort();
     symlinks.dedup();
-    remove_duplicate_symlinks(
-        &mut symlinks,
-        &mut symlinks_str,
-        &api_config
-            .folders
-            .iter()
-            .map(|f| f.path.clone())
-            .collect::<Vec<String>>(),
-    );
+    for symlink in &symlinks {
+        symlinks_str.push_str(&format!("{}\n", symlink));
+    }
     write("symlinks.txt", symlinks_str)?;
 
     Ok(())
@@ -83,15 +82,15 @@ fn generate_symlinks(api_config: &ApiConfig) -> Result<(), Box<dyn std::error::E
 
 // Remove duplicate symlinks and excluded symlinks from the list of symlinks
 fn remove_duplicate_symlinks(
-    symlinks: &mut Vec<String>,
+    symlinks: &mut HashSet<String>,
     symlinks_str: &mut String,
-    exclude: &[String],
+    exclude: &[PathBuf],
 ) {
     let mut new_symlinks_str = symlinks_str.to_owned();
     for subdir in exclude {
         let excluded_symlinks: Vec<&str> = new_symlinks_str
             .lines()
-            .filter(|line| line.contains(subdir))
+            .filter(|line| line.contains(subdir.to_str().unwrap()))
             .collect();
         let mut temp_str = new_symlinks_str.clone();
         for excluded_symlink in excluded_symlinks {
@@ -126,5 +125,122 @@ fn main() {
     match generate_symlinks(&api_config) {
         Ok(_) => println!("Symlinks generated successfully."),
         Err(e) => eprintln!("Error generating symlinks: {}", e),
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_symlinks() {
+        // Create a temporary directory for the test
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create some test files in the temporary directory
+        let test_file1_path = temp_dir.path().join("test_file1.txt");
+        let test_file2_path = temp_dir.path().join("test_file2.txt");
+        let test_file3_path = temp_dir.path().join("test_file3.txt");
+        std::fs::write(&test_file1_path, "test file 1").unwrap();
+        std::fs::write(&test_file2_path, "test file 2").unwrap();
+        std::fs::write(&test_file3_path, "test file 3").unwrap();
+
+        // Create a test API configuration
+        let api_config = ApiConfig {
+            folders: vec![FolderConfig {
+                path: temp_dir.path().to_owned(),
+                exclude: vec![],
+            }],
+            symlink_root: PathBuf::from("tests/symlinks"),
+        };
+
+        // Generate symlinks for the test API configuration
+        generate_symlinks(&api_config).unwrap();
+
+        // Check that the symlinks were generated correctly
+        let symlink_file1_path = PathBuf::from("tests/symlinks/test_file1.txt");
+        let symlink_file2_path = PathBuf::from("tests/symlinks/test_file2.txt");
+        let symlink_file3_path = PathBuf::from("tests/symlinks/test_file3.txt");
+        assert!(symlink_file1_path.exists());
+        assert!(symlink_file2_path.exists());
+        assert!(symlink_file3_path.exists());
+        assert_eq!(
+            std::fs::read_to_string(&symlink_file1_path).unwrap(),
+            "test file 1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&symlink_file2_path).unwrap(),
+            "test file 2"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&symlink_file3_path).unwrap(),
+            "test file 3"
+        );
+
+        // Clean up the test files and symlinks
+        std::fs::remove_file(&test_file1_path).unwrap();
+        std::fs::remove_file(&test_file2_path).unwrap();
+        std::fs::remove_file(&test_file3_path).unwrap();
+        std::fs::remove_file(&symlink_file1_path).unwrap();
+        std::fs::remove_file(&symlink_file2_path).unwrap();
+        std::fs::remove_file(&symlink_file3_path).unwrap();
+    }
+
+    #[test]
+    fn test_generate_symlinks_with_exclusions() {
+        // Create a temporary directory for the test
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create some test files in the temporary directory
+        let test_file1_path = temp_dir.path().join("test_file1.txt");
+        let test_file2_path = temp_dir.path().join("test_file2.txt");
+        let test_file3_path = temp_dir.path().join("test_file3.txt");
+        let excluded_file_path = temp_dir.path().join("excluded_file.txt");
+        std::fs::write(&test_file1_path, "test file 1").unwrap();
+        std::fs::write(&test_file2_path, "test file 2").unwrap();
+        std::fs::write(&test_file3_path, "test file 3").unwrap();
+        std::fs::write(&excluded_file_path, "excluded file").unwrap();
+
+        // Create a test API configuration with an exclusion pattern
+        let api_config = ApiConfig {
+            folders: vec![FolderConfig {
+                path: temp_dir.path().to_owned(),
+                exclude: vec!["excluded_file".to_owned()],
+            }],
+            symlink_root: PathBuf::from("tests/symlinks"),
+        };
+
+        // Generate symlinks for the test API configuration
+        generate_symlinks(&api_config).unwrap();
+
+        // Check that the symlinks were generated correctly
+        let symlink_file1_path = PathBuf::from("tests/symlinks/test_file1.txt");
+        let symlink_file2_path = PathBuf::from("tests/symlinks/test_file2.txt");
+        let symlink_file3_path = PathBuf::from("tests/symlinks/test_file3.txt");
+        let symlink_excluded_file_path = PathBuf::from("tests/symlinks/excluded_file.txt");
+        assert!(symlink_file1_path.exists());
+        assert!(symlink_file2_path.exists());
+        assert!(symlink_file3_path.exists());
+        assert!(!symlink_excluded_file_path.exists());
+        assert_eq!(
+            std::fs::read_to_string(&symlink_file1_path).unwrap(),
+            "test file 1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&symlink_file2_path).unwrap(),
+            "test file 2"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&symlink_file3_path).unwrap(),
+            "test file 3"
+        );
+
+        // Clean up the test files and symlinks
+        std::fs::remove_file(&test_file1_path).unwrap();
+        std::fs::remove_file(&test_file2_path).unwrap();
+        std::fs::remove_file(&test_file3_path).unwrap();
+        std::fs::remove_file(&excluded_file_path).unwrap();
+        std::fs::remove_file(&symlink_file1_path).unwrap();
+        std::fs::remove_file(&symlink_file2_path).unwrap();
+        std::fs::remove_file(&symlink_file3_path).unwrap();
     }
 }

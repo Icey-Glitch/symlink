@@ -2,7 +2,7 @@
 /target/
 /dist/
 /build/
-
+/tests/
 # Ignore configuration files that contain sensitive information
 config.json
 secrets.toml
@@ -26,6 +26,8 @@ secrets.toml
 *.dll
 *.so
 *.dylib
+*.txt
+
 
 # Ignore package files and dependencies
 node_modules/
