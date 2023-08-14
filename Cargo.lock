@@ -12,16 +12,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotfiles"
-version = "0.1.0"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
- "walkdir",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -124,6 +114,16 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "symlink-creator"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "walkdir",
 ]
 
 [[package]]

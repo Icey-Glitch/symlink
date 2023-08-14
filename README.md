@@ -22,7 +22,7 @@ This Rust program generates symbolic links based on a configuration provided in 
   ],
   "symlink_root": "path/to/target/folder"
 }
-
+```
 
 # Regular Expressions (Regex) Basics
 
