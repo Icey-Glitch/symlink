@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Generate symlinks for all files in the specified folders
     let mut logger = Logger::new("log.txt").unwrap();
     generate_symlinks(&api_config, &mut logger)?;
-    println!("Symlinks generated successfully.");
+    println!("Symlinks generated successfully..");
 
     Ok(())
 }
