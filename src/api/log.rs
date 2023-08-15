@@ -1,22 +1,25 @@
 use std::fs::OpenOptions;
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
 pub struct Logger {
-    file: Option<std::fs::File>,
+    file: Option<BufWriter<std::fs::File>>,
 }
 
 impl Logger {
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map(BufWriter::new)?;
         Ok(Self { file: Some(file) })
     }
 
     pub fn log(&mut self, message: &str) -> io::Result<()> {
-        let formatted_message = format!("{}\n", message);
-        print!("{}", formatted_message);
-        if let Some(file) = &mut self.file {
-            file.write_all(formatted_message.as_bytes())?;
+        writeln!(io::stdout(), "{}", message)?;
+        if let Some(file) = self.file.as_mut() {
+            writeln!(file, "{}", message)?;
             file.flush()?;
         }
         Ok(())
